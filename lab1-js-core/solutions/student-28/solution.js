@@ -20,7 +20,7 @@ function simpleTask() {
 // ===== ЗАДАНИЕ 2: Функции =====
 function getReviewerNumber(number, lab) {
     // 2.1 Функция определяющая номер ревьюера для вашей группы по вашему номеру и номеру лабораторной работы
-    return (number + lab) % 30;
+    return ((number + lab - 1) % 30) + 1;
 }
 
 function getVariant(number, variants) {
@@ -83,7 +83,7 @@ const book = {
     // метод toggleAvailability - который меняет значение доступности и возвращает его
     title: "Жизнь с нуля в альтернативном мире",
     author: "Таппэй Нагацуки",
-    year: 214,
+    year: 2014,
     pages: 248,
     isAvailable: true,
 
@@ -430,6 +430,7 @@ function runTests() {
     console.log("\n=== ЗАДАНИЕ 2 ===")
     // getReviewerNumber
     console.assert(getReviewerNumber(28, 1) === 29, "Тест получения ревьюера провален");
+    console.assert(getReviewerNumber(29, 1) === 30, "Тест получения ревьюера провален");
 
     // getVariant
     console.assert(getVariant(28, 5) === 3)
@@ -461,7 +462,7 @@ function runTests() {
 
     // book getInfo()
     console.assert(
-        book.getInfo() === 'название: "Жизнь с нуля в альтернативном мире", автор: Таппэй Нагацуки, год: 214, страниц: 248',
+        book.getInfo() === 'название: "Жизнь с нуля в альтернативном мире", автор: Таппэй Нагацуки, год: 2014, страниц: 248',
         "Тест book.getInfo провален"
     );
 
