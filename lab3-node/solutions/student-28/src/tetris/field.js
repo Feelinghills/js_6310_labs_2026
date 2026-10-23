@@ -42,6 +42,20 @@ export function canPlace(field, matrix, startRow, startCol) {
   return true;
 }
 
+// Проверка, можно ли разместить фигуру хотя бы в одном столбце на самом верху поля
+export function canPlaceAnywhere(field, tetramino) {
+  if (!tetramino || !tetramino.matrix) {
+    return false;
+  }
+  const width = field[0].length;
+  for (let c = 0; c <= width - tetramino.width; c++) {
+    if (canPlace(field, tetramino.matrix, 0, c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Пошаговый сброс тетрамино в выбранный столбец (0-based)
 export function dropTetramino(field, tetramino, colIndex) {
   if (!tetramino || !tetramino.matrix) {
@@ -62,12 +76,12 @@ export function dropTetramino(field, tetramino, colIndex) {
     };
   }
 
-  // Проверяем, помещается ли фигура в самой верхней строке
+  // Проверяем, помещается ли фигура в выбранном столбце на самой верхней строке
   if (!canPlace(field, tetramino.matrix, 0, colIndex)) {
     return {
       success: false,
       gameOver: true,
-      error: 'Поле переполнено! Фигуру невозможно разместить. Игра окончена.',
+      error: `Столбец ${colIndex + 1} переполнен! Фигура не помещается на поле. Игра окончена.`,
     };
   }
 
@@ -130,9 +144,14 @@ export function renderFieldText(field) {
 }
 
 // Форматирование поля с информацией об активной партии
-export function formatFieldMessage(field, { score = 0, lines = 0, activeGame = false } = {}) {
+export function formatFieldMessage(field, { score = 0, lines = 0, activeGame = false, isGameOver = false } = {}) {
   const renderedField = renderFieldText(field);
-  const statusLine = activeGame ? '🎮 Активная партия' : '⏸️ Партия не начата (пустое поле)';
+  let statusLine = '⏸️ Партия не начата (пустое поле)';
+  if (isGameOver) {
+    statusLine = '💥 Игра окончена (/new_game для новой партии)';
+  } else if (activeGame) {
+    statusLine = '🎮 Активная партия';
+  }
 
   return [
     `Статус: ${statusLine}`,

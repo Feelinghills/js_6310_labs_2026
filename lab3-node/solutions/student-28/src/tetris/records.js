@@ -40,8 +40,8 @@ export function addRecord(name, score) {
   }
 
   const numericScore = Number(score);
-  if (!Number.isFinite(numericScore) || numericScore < 0 || !Number.isInteger(numericScore)) {
-    return { success: false, error: 'Счёт должен быть неотрицательным целым числом.' };
+  if (!Number.isFinite(numericScore) || numericScore <= 0 || !Number.isInteger(numericScore)) {
+    return { success: false, error: 'Счёт должен быть положительным целым числом больше нуля.' };
   }
 
   const newEntry = {

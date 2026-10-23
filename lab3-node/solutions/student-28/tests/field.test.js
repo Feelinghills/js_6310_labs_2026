@@ -4,6 +4,7 @@ import {
   FIELD_HEIGHT,
   createEmptyField,
   canPlace,
+  canPlaceAnywhere,
   dropTetramino,
   renderFieldText,
   formatFieldMessage,
@@ -45,6 +46,32 @@ describe('field', () => {
       field[10][2] = 1;
       const piece = getTetramino('O');
       expect(canPlace(field, piece.matrix, 10, 2)).toBe(false);
+    });
+  });
+
+  describe('canPlaceAnywhere', () => {
+    test('returns true when at least one column is free', () => {
+      const field = createEmptyField();
+      for (let c = 0; c < 8; c++) {
+        field[0][c] = 1;
+      }
+      const piece = getTetramino('O'); // width 2, fits in cols 8-9
+      expect(canPlaceAnywhere(field, piece)).toBe(true);
+    });
+
+    test('returns false when all columns are blocked', () => {
+      const field = createEmptyField();
+      for (let c = 0; c < FIELD_WIDTH; c++) {
+        field[0][c] = 1;
+      }
+      const piece = getTetramino('O');
+      expect(canPlaceAnywhere(field, piece)).toBe(false);
+    });
+
+    test('returns false for invalid tetramino', () => {
+      const field = createEmptyField();
+      expect(canPlaceAnywhere(field, null)).toBe(false);
+      expect(canPlaceAnywhere(field, {})).toBe(false);
     });
   });
 
@@ -90,19 +117,19 @@ describe('field', () => {
       expect(secondDrop.placedRow).toBe(FIELD_HEIGHT - piece.height * 2 + 1);
     });
 
-    test('detects game over when top row cannot accommodate piece', () => {
+    test('ends game if chosen column is full (cannot place figure at top of column)', () => {
       const field = createEmptyField();
       field[0][0] = 1;
       const piece = getTetramino('O');
       const result = dropTetramino(field, piece, 0);
       expect(result.success).toBe(false);
       expect(result.gameOver).toBe(true);
-      expect(result.error).toContain('Поле переполнено');
+      expect(result.error).toContain('Столбец 1 переполнен');
+      expect(result.error).toContain('Игра окончена');
     });
 
     test('clears completed single line and adds score', () => {
       const field = createEmptyField();
-      // Заполняем нижнюю строку, кроме первых 4 клеток
       for (let c = 4; c < FIELD_WIDTH; c++) {
         field[FIELD_HEIGHT - 1][c] = 1;
       }
@@ -112,13 +139,11 @@ describe('field', () => {
       expect(result.success).toBe(true);
       expect(result.linesCleared).toBe(1);
       expect(result.addedScore).toBe(100);
-      // Нижняя строка должна очиститься и стать пустой
       expect(result.newField[FIELD_HEIGHT - 1].every((cell) => cell === 0)).toBe(true);
     });
 
     test('clears multiple completed lines and awards bonus points', () => {
       const field = createEmptyField();
-      // Заполняем две нижние строки, кроме первых 2 клеток
       for (let r = FIELD_HEIGHT - 2; r < FIELD_HEIGHT; r++) {
         for (let c = 2; c < FIELD_WIDTH; c++) {
           field[r][c] = 1;
@@ -147,7 +172,7 @@ describe('field', () => {
       expect(renderFieldText(null)).toBe('');
     });
 
-    test('formats message for inactive and active game', () => {
+    test('formats message for inactive, active and game over states', () => {
       const field = createEmptyField();
       const defaultMsg = formatFieldMessage(field);
       expect(defaultMsg).toContain('Партия не начата');
@@ -159,6 +184,9 @@ describe('field', () => {
       expect(activeMsg).toContain('Активная партия');
       expect(activeMsg).toContain('Счёт: 450');
       expect(activeMsg).toContain('Очищено линий: 3');
+
+      const overMsg = formatFieldMessage(field, { score: 100, isGameOver: true });
+      expect(overMsg).toContain('Игра окончена');
     });
   });
 });

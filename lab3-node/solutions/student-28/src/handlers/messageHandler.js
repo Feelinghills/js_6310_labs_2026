@@ -17,6 +17,7 @@ export const STATES = {
   IDLE: 'idle',
   WAIT_RECORD_NAME: 'waitRecordName',
   WAIT_DROP_COLUMN: 'waitDropColumn',
+  GAME_OVER: 'gameOver',
 };
 
 // Хранилище сессий пользователей (состояние каждого пользователя независимо)
@@ -31,6 +32,7 @@ export function getSession(userId) {
       score: 0,
       lines: 0,
       activeGame: false,
+      isGameOver: false,
       nextTetramino: null,
       pendingRecordScore: null,
     });
@@ -67,17 +69,22 @@ async function performDrop(session, colNumber, reply) {
 
   if (!result.success) {
     if (result.gameOver) {
+      session.isGameOver = true;
       session.activeGame = false;
       session.nextTetramino = null;
-      session.state = STATES.IDLE;
+      session.state = STATES.GAME_OVER;
       await reply([
-        '💥 Поле переполнено! Фигуру невозможно разместить. Игра окончена.',
+        result.error,
         `Итоговый счёт: ${session.score} очков.`,
-        'Сохраните ваш результат командой /records или начните заново: /new_game',
+        session.score > 0
+          ? 'Сохраните ваш результат командой /records или начните заново: /new_game'
+          : 'Начните заново командой /new_game',
       ].join('\n'));
       return;
     }
-    await reply(result.error);
+    // Некорректный столбец (выход за границы ширины поля) — ждём повторного ввода
+    session.state = STATES.WAIT_DROP_COLUMN;
+    await reply(`${result.error}\nОтправьте другой номер столбца (или используйте /drop [номер]):`);
     return;
   }
 
@@ -97,9 +104,10 @@ async function performDrop(session, colNumber, reply) {
     score: session.score,
     lines: session.lines,
     activeGame: true,
+    isGameOver: false,
   });
 
-  await reply(`${events.join('\n')}\n\n${fieldView}`);
+  await reply(`${events.join('\n')}\n\n${fieldView}\n\nСледующий ход: /next_tetramino`);
 }
 
 // Обработчик команды /field
@@ -108,17 +116,26 @@ async function handleFieldCommand(session, reply) {
     score: session.score,
     lines: session.lines,
     activeGame: session.activeGame,
+    isGameOver: session.isGameOver,
   });
 
-  const extra = session.nextTetramino
-    ? `\nОжидает сброса: ${session.nextTetramino.name} (используйте /drop [1-10])`
-    : '';
+  let extra = '';
+  if (session.isGameOver) {
+    extra = '\nПартия завершена. Введите /new_game для новой игры.';
+  } else if (session.nextTetramino) {
+    extra = `\nОжидает сброса: ${session.nextTetramino.name} (используйте /drop [1-10])`;
+  }
 
   await reply(`${message}${extra}`);
 }
 
 // Обработчик команды /next_tetramino
 async function handleNextTetraminoCommand(session, reply) {
+  if (session.isGameOver) {
+    await reply('💥 Текущая партия уже завершена (Игра окончена)! Чтобы начать новую партию, используйте команду /new_game.');
+    return;
+  }
+
   session.nextTetramino = getRandomTetramino();
   session.activeGame = true;
   session.state = STATES.WAIT_DROP_COLUMN;
@@ -137,18 +154,31 @@ async function handleNextTetraminoCommand(session, reply) {
 async function handleRecordsCommand(session, args, reply) {
   if (args.length >= 2 && args[0].toLowerCase() === 'save') {
     const name = args[1];
-    const customScore = args[2] ? Number(args[2]) : session.score;
-    const addResult = addRecord(name, customScore);
+    if (session.score <= 0) {
+      await reply('Нельзя сохранить рекорд: у вас 0 очков. Сначала сыграйте партию и наберите очки!');
+      return;
+    }
+    const addResult = addRecord(name, session.score);
     if (!addResult.success) {
       await reply(`Ошибка сохранения: ${addResult.error}`);
       return;
     }
-    session.state = STATES.IDLE;
+    session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
     await reply([
       `🎉 Счёт ${addResult.record.score} игрока ${addResult.record.name} сохранён (место #${addResult.rank})!`,
       '',
       formatLeaderboard(),
     ].join('\n'));
+    return;
+  }
+
+  if (session.score <= 0) {
+    await reply([
+      formatLeaderboard(),
+      '',
+      'У вас пока 0 очков. Чтобы сохранить рекорд, сначала наберите очки в игре (/next_tetramino, /drop)!',
+    ].join('\n'));
+    session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
     return;
   }
 
@@ -165,6 +195,11 @@ async function handleRecordsCommand(session, args, reply) {
 
 // Обработчик команды /drop
 async function handleDropCommand(session, args, reply) {
+  if (session.isGameOver) {
+    await reply('💥 Текущая партия уже завершена (Игра окончена)! Чтобы начать новую партию, используйте команду /new_game.');
+    return;
+  }
+
   if (args.length > 0) {
     const colNumber = Number(args[0]);
     if (!Number.isInteger(colNumber)) {
@@ -190,15 +225,20 @@ async function handleDropCommand(session, args, reply) {
 
 // Обработчики состояний при обычном текстовом вводе
 async function onWaitRecordName(session, text, reply) {
-  const scoreToSave = session.pendingRecordScore !== null ? session.pendingRecordScore : session.score;
-  const result = addRecord(text, scoreToSave);
+  if (session.score <= 0) {
+    session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
+    await reply('Нельзя сохранить рекорд с 0 очков. Сначала наберите очки в игре!');
+    return;
+  }
+
+  const result = addRecord(text, session.score);
 
   if (!result.success) {
     await reply(`${result.error}\nПопробуйте ввести другое имя (или /cancel для отмены):`);
     return;
   }
 
-  session.state = STATES.IDLE;
+  session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
   session.pendingRecordScore = null;
 
   await reply([
@@ -209,6 +249,10 @@ async function onWaitRecordName(session, text, reply) {
 }
 
 async function onWaitDropColumn(session, text, reply) {
+  if (session.isGameOver) {
+    await reply('💥 Текущая партия уже завершена (Игра окончена)! Чтобы начать новую партию, используйте команду /new_game.');
+    return;
+  }
   const colNumber = Number(text);
   if (!Number.isInteger(colNumber)) {
     await reply('Пожалуйста, отправьте корректный номер столбца от 1 до 10 (или /cancel):');
@@ -242,7 +286,7 @@ const handleMessage = async (userId, text, reply) => {
     switch (command) {
     case '/start':
     case '/help':
-      session.state = STATES.IDLE;
+      session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
       await reply(HELP_TEXT);
       return;
 
@@ -268,6 +312,7 @@ const handleMessage = async (userId, text, reply) => {
       session.score = 0;
       session.lines = 0;
       session.activeGame = true;
+      session.isGameOver = false;
       session.nextTetramino = null;
       session.pendingRecordScore = null;
       session.state = STATES.IDLE;
@@ -275,7 +320,7 @@ const handleMessage = async (userId, text, reply) => {
       return;
 
     case '/cancel':
-      session.state = STATES.IDLE;
+      session.state = session.isGameOver ? STATES.GAME_OVER : STATES.IDLE;
       session.pendingRecordScore = null;
       await reply('Действие отменено. Текущее состояние сброшено в режим ожидания команд (/help).');
       return;
@@ -289,6 +334,10 @@ const handleMessage = async (userId, text, reply) => {
   // Обработка сообщений в зависимости от текущего состояния FSM
   const handler = stateHandlers[session.state];
   if (!handler) {
+    if (session.isGameOver) {
+      await reply('💥 Текущая партия завершена (Игра окончена)! Чтобы начать новую партию, введите /new_game.');
+      return;
+    }
     await reply(`Сначала выберите команду.\n${HELP_TEXT}`);
     return;
   }

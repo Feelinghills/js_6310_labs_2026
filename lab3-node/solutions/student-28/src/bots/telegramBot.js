@@ -2,6 +2,22 @@ import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 import handleMessage from '../handlers/messageHandler.js';
 
+// Экранирование спецсимволов Markdown v1 вне блоков кода, чтобы парсер Telegram не падал
+export function escapeMarkdownOutsideCode(text) {
+  if (typeof text !== 'string') {
+    return text;
+  }
+  const parts = text.split(/(```[\s\S]*?```)/g);
+  return parts
+      .map((part) => {
+        if (part.startsWith('```') && part.endsWith('```')) {
+          return part;
+        }
+        return part.replace(/(?<!\\)([_*[`])/g, '\\$1');
+      })
+      .join('');
+}
+
 const runTelegramBot = () => {
   dotenv.config({ quiet: true });
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -30,8 +46,10 @@ const runTelegramBot = () => {
       const reply = async (text) => {
         if (typeof text === 'string' && text.includes('```')) {
           try {
-            return await bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
-          } catch {
+            const formatted = escapeMarkdownOutsideCode(text);
+            return await bot.sendMessage(msg.chat.id, formatted, { parse_mode: 'Markdown' });
+          } catch (err) {
+            console.error('Ошибка отправки Markdown сообщения:', err.message);
             return bot.sendMessage(msg.chat.id, text);
           }
         }

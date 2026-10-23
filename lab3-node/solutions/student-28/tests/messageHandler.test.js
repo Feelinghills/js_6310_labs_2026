@@ -69,6 +69,7 @@ describe('messageHandler', () => {
     const res = await send(1, '/drop 1');
     expect(res).toContain('Фигура сброшена в столбец 1');
     expect(res).toContain('Счёт: 0');
+    expect(res).toContain('/next_tetramino');
     expect(getSession(1).state).toBe(STATES.IDLE);
     expect(getSession(1).nextTetramino).toBeNull();
   });
@@ -102,11 +103,9 @@ describe('messageHandler', () => {
 
   test('clearing lines awards points and displays event', async () => {
     const session = getSession(1);
-    // Заполняем нижнюю строку, кроме столбца 1 (индекс 0)
     for (let c = 1; c < 10; c++) {
       session.field[19][c] = 1;
     }
-    // Задаём фигуру I, вертикально или шириной 1
     session.nextTetramino = {
       type: 'CUSTOM',
       name: 'Блок',
@@ -123,22 +122,79 @@ describe('messageHandler', () => {
     expect(session.lines).toBe(1);
   });
 
-  test('game over triggers when field overflows', async () => {
+  test('dropping piece into an overflowed column ends game and prevents further play without /new_game', async () => {
     const session = getSession(1);
-    // Блокируем верхнюю строку
-    for (let c = 0; c < 10; c++) {
-      session.field[0][c] = 1;
-    }
+    session.field[0][0] = 1;
     session.nextTetramino = getTetramino('O');
     session.state = STATES.WAIT_DROP_COLUMN;
 
     const res = await send(1, '1');
+    expect(res).toContain('Столбец 1 переполнен');
     expect(res).toContain('Игра окончена');
+    expect(session.isGameOver).toBe(true);
     expect(session.activeGame).toBe(false);
+    expect(session.state).toBe(STATES.GAME_OVER);
+
+    // Попытка продолжить игру через /drop 5 блокируется
+    const dropAfterOver = await send(1, '/drop 5');
+    expect(dropAfterOver).toContain('Текущая партия уже завершена');
+
+    // Попытка сброса фигуры без аргументов блокируется
+    const dropNoArgAfterOver = await send(1, '/drop');
+    expect(dropNoArgAfterOver).toContain('Текущая партия уже завершена');
+
+    // Попытка получить фигуру через /next_tetramino блокируется
+    const nextAfterOver = await send(1, '/next_tetramino');
+    expect(nextAfterOver).toContain('Текущая партия уже завершена');
+
+    // Обычный ввод номера столбца блокируется
+    const textAfterOver = await send(1, '5');
+    expect(textAfterOver).toContain('Текущая партия завершена');
+
+    // Просмотр поля в режиме Game Over
+    const fieldRes = await send(1, '/field');
+    expect(fieldRes).toContain('Партия завершена');
+
+    // /help оставляет состояние Game Over
+    await send(1, '/help');
+    expect(session.isGameOver).toBe(true);
+    expect(session.state).toBe(STATES.GAME_OVER);
+
+    // /cancel оставляет состояние Game Over
+    await send(1, '/cancel');
+    expect(session.isGameOver).toBe(true);
+    expect(session.state).toBe(STATES.GAME_OVER);
+
+    // Старт новой игры сбрасывает статус Game Over
+    const newGameRes = await send(1, '/new_game');
+    expect(newGameRes).toContain('Новая партия начата');
+    expect(session.isGameOver).toBe(false);
+  });
+
+  test('guards against game over and zero score in sub-handlers', async () => {
+    const session = getSession(1);
+    session.isGameOver = true;
+    session.state = STATES.WAIT_DROP_COLUMN;
+    const dropRes = await send(1, '2');
+    expect(dropRes).toContain('Текущая партия уже завершена');
+
+    session.isGameOver = false;
+    session.score = 0;
+    session.state = STATES.WAIT_RECORD_NAME;
+    const nameRes = await send(1, 'Hero');
+    expect(nameRes).toContain('Нельзя сохранить рекорд с 0 очков');
+  });
+
+  test('/records with 0 score notifies player to earn points first and does not switch state', async () => {
+    const session = getSession(1);
+    session.score = 0;
+    const res = await send(1, '/records');
+    expect(res).toContain('Таблица лидеров');
+    expect(res).toContain('У вас пока 0 очков');
     expect(session.state).toBe(STATES.IDLE);
   });
 
-  test('/records displays leaderboard and switches to WAIT_RECORD_NAME', async () => {
+  test('/records with positive score asks for player name', async () => {
     const session = getSession(1);
     session.score = 650;
     const res = await send(1, '/records');
@@ -147,32 +203,47 @@ describe('messageHandler', () => {
     expect(session.state).toBe(STATES.WAIT_RECORD_NAME);
   });
 
-  test('entering player name saves record and shows updated leaderboard', async () => {
+  test('entering player name saves actual game score into leaderboard', async () => {
     const session = getSession(1);
     session.score = 750;
     await send(1, '/records');
     const res = await send(1, 'PlayerOne');
     expect(res).toContain('успешно сохранён');
     expect(res).toContain('PlayerOne');
+    expect(res).toContain('750');
     expect(session.state).toBe(STATES.IDLE);
   });
 
   test('entering invalid name keeps waiting in WAIT_RECORD_NAME', async () => {
+    const session = getSession(1);
+    session.score = 500;
     await send(1, '/records');
     const res = await send(1, 'X');
     expect(res).toContain('слишком короткое');
     expect(getSession(1).state).toBe(STATES.WAIT_RECORD_NAME);
   });
 
-  test('/records save <name> [score] allows direct saving', async () => {
-    const res = await send(1, '/records save SuperGamer 950');
-    expect(res).toContain('SuperGamer');
-    expect(res).toContain('950');
-    expect(res).toContain('сохранён');
+  test('/records save <name> saves actual session score and rejects custom numbers', async () => {
+    const session = getSession(1);
+    session.score = 450;
+    // Попытка передать читерские очки 999999 должна быть проигнорирована — сохраняется session.score (450)
+    const res = await send(1, '/records save Cheater 999999');
+    expect(res).toContain('Cheater');
+    expect(res).toContain('450');
+    expect(res).not.toContain('999999');
+  });
+
+  test('/records save with 0 score is rejected', async () => {
+    const session = getSession(1);
+    session.score = 0;
+    const res = await send(1, '/records save Cheater 999999');
+    expect(res).toContain('Нельзя сохранить рекорд: у вас 0 очков');
   });
 
   test('/records save with invalid name returns error', async () => {
-    const res = await send(1, '/records save X 950');
+    const session = getSession(1);
+    session.score = 300;
+    const res = await send(1, '/records save X');
     expect(res).toContain('Ошибка сохранения');
   });
 
@@ -189,7 +260,9 @@ describe('messageHandler', () => {
     expect(session.field[19][0]).toBe(0);
   });
 
-  test('/cancel resets FSM state to IDLE', async () => {
+  test('/cancel resets FSM state', async () => {
+    const session = getSession(1);
+    session.score = 400;
     await send(1, '/records');
     expect(getSession(1).state).toBe(STATES.WAIT_RECORD_NAME);
 
@@ -213,6 +286,8 @@ describe('messageHandler', () => {
     expect(getSession(1).state).toBe(STATES.WAIT_DROP_COLUMN);
     expect(getSession(2).state).toBe(STATES.IDLE);
 
+    const session2 = getSession(2);
+    session2.score = 200;
     await send(2, '/records');
     expect(getSession(2).state).toBe(STATES.WAIT_RECORD_NAME);
     expect(getSession(1).state).toBe(STATES.WAIT_DROP_COLUMN);

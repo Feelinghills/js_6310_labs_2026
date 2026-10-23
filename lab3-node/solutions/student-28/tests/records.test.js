@@ -50,15 +50,16 @@ describe('records', () => {
       expect(top.name).toBe('Champion');
     });
 
-    test('rejects invalid names or non-numeric/negative scores', () => {
+    test('rejects invalid names or non-numeric/negative/zero scores', () => {
       expect(addRecord('A', 500).success).toBe(false);
+      expect(addRecord('Player', 0).success).toBe(false);
       expect(addRecord('Player', -10).success).toBe(false);
       expect(addRecord('Player', 'abc').success).toBe(false);
       expect(addRecord('Player', 10.5).success).toBe(false);
     });
 
     test('caps table size at 50', () => {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 1; i <= 60; i++) {
         addRecord(`Bot_${i}`, i * 10);
       }
       expect(getLeaderboard(100).length).toBeLessThanOrEqual(50);

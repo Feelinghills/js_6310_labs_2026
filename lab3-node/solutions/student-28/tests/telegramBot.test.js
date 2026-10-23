@@ -17,7 +17,7 @@ jest.unstable_mockModule('node-telegram-bot-api', () => ({
   }),
 }));
 
-const { default: runTelegramBot } = await import('../src/bots/telegramBot.js');
+const { default: runTelegramBot, escapeMarkdownOutsideCode } = await import('../src/bots/telegramBot.js');
 const { default: TelegramBot } = await import('node-telegram-bot-api');
 
 describe('telegramBot', () => {
@@ -73,6 +73,21 @@ describe('telegramBot', () => {
     expect(bot.sendMessage).toHaveBeenCalledWith(250, expect.stringContaining('```'), { parse_mode: 'Markdown' });
   });
 
+  test('falls back to plain text if Markdown sendMessage rejects', async () => {
+    const bot = runTelegramBot();
+    bot.sendMessage.mockRejectedValueOnce(new Error('Bad Request: can\'t parse entities'));
+    const spy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    await bot.handlers.message({
+      chat: { id: 260 },
+      text: '/field',
+    });
+
+    expect(bot.sendMessage).toHaveBeenCalledTimes(2);
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('Ошибка отправки Markdown'), expect.any(String));
+    spy.mockRestore();
+  });
+
   test('catches and logs error when message handling fails', async () => {
     const bot = runTelegramBot();
     bot.sendMessage.mockRejectedValueOnce(new Error('Network error'));
@@ -108,5 +123,20 @@ describe('telegramBot', () => {
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('не задан'));
 
     spy.mockRestore();
+  });
+
+  describe('escapeMarkdownOutsideCode', () => {
+    test('escapes underscores and brackets outside code blocks while leaving block intact', () => {
+      const input = 'Команда /next_tetramino [1-10]\n```\n| . ■ |\n```\nСледующий ход: /next_tetramino';
+      const output = escapeMarkdownOutsideCode(input);
+      expect(output).toContain('/next\\_tetramino');
+      expect(output).toContain('\\[1-10]');
+      expect(output).toContain('```\n| . ■ |\n```');
+    });
+
+    test('returns non-string inputs untouched', () => {
+      expect(escapeMarkdownOutsideCode(null)).toBeNull();
+      expect(escapeMarkdownOutsideCode(123)).toBe(123);
+    });
   });
 });
